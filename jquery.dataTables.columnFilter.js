@@ -33,7 +33,11 @@
 
         var oFunctionTimeout = null;
 
-        var fnOnFiltered = function () { };
+        var fnOnFiltered = function () {
+            if (!oTable.fnSettings().oFeatures.bServerSide) {
+                oTable.api().columns.adjust();
+            }
+        };
 
         function _fnGetColumnValues(oSettings, iColumn, bUnique, bFiltered, bIgnoreEmpty) {
             ///<summary>
@@ -96,9 +100,12 @@
         }
 
         function fnCreateInput(oTable, regex, smart, bIsNumber, iFilterLength, iMaxLenght) {
-            var sCSSClass = "text_filter form-control";
+            if (!iFilterLength) {
+                iFilterLength = 0;
+            }
+            var sCSSClass = "text_filter";
             if (bIsNumber)
-                sCSSClass = "number_filter form-control";
+                sCSSClass = "number_filter";
 
             label = label.replace(/(^\s*)|(\s*$)/g, "");
             var currentFilter = oTable.fnSettings().aoPreSearchCols[i].sSearch;
@@ -113,6 +120,7 @@
             }
 
             var input = $('<input type="text" class="' + search_init + sCSSClass + '" value="' + inputvalue + '" rel="' + i + '"/>');
+            input.data("lastFilter", "");
             if (iMaxLenght != undefined && iMaxLenght != -1) {
                 input.attr('maxlength', iMaxLenght);
             }
@@ -132,31 +140,28 @@
                     fnOnFiltered();
                 });
             } else {
-                input.keyup(function () {
-                    if (oTable.fnSettings().oFeatures.bServerSide && iFilterLength != 0) {
-                        //If filter length is set in the server-side processing mode
-                        //Check has the user entered at least iFilterLength new characters
+                input.on('keyup blur', (function(e) {
+                    // Filter will is done on blur or on keypress
+                    var enterKey = (e.which == 13);
+                    if ((e.type === 'blur' || !properties.bEnterKeyFilter || enterKey) &&
+                        this.value.length >= iFilterLength && $(this).data("lastFilter") !== this.value) {
+                            //Remember the filter
+                            $(this).data("lastFilter", this.value);
 
-                        var currentFilter = oTable.fnSettings().aoPreSearchCols[index].sSearch;
-                        var iLastFilterLength = $(this).data("dt-iLastFilterLength");
-                        if (typeof iLastFilterLength == "undefined")
-                            iLastFilterLength = 0;
-                        var iCurrentFilterLength = this.value.length;
-                        if (Math.abs(iCurrentFilterLength - iLastFilterLength) < iFilterLength
-                        //&& currentFilter.length == 0 //Why this?
-					        ) {
-                            //Cancel the filtering
-                            return;
-                        }
-                        else {
-                            //Remember the current filter length
-                            $(this).data("dt-iLastFilterLength", iCurrentFilterLength);
-                        }
+                            // Retrieve visible column index
+                            var visibleIndex = $(this).closest("td")[0].cellIndex;
+
+                            /* Filter on the column of this element */
+                            var filterValue = (properties.sSearchMode === "startWith" && !oTable.fnSettings().oFeatures.bServerSide) ? "^" + this.value + ".*$" : this.value;
+                            var useRegex = (properties.sSearchMode === "startWith") ? true : regex;
+                            oTable.api().column(visibleIndex + ":visible").search(filterValue, useRegex, smart, true).draw();
+                            fnOnFiltered();
                     }
-                    /* Filter on the column (the index) of this element */
-                    oTable.fnFilter(this.value, _fnColumnIndex(index), regex, smart); //Issue 37
-                    fnOnFiltered();
-                });
+                    if (enterKey && properties.bStopEnterPropagation) {
+                        e.stopPropagation();
+                        return false;
+                    }
+                }));
             }
 
             input.focus(function () {
@@ -658,7 +663,10 @@
             aoColumns: null,
             sRangeFormat: "From {from} to {to}",
             sDateFromToken: "from",
-            sDateToToken: "to"
+            sDateToToken: "to",
+            bEnterKeyFilter: false,
+            bStopEnterPropagation: false,
+            sSearchMode: "contains"
         };
 
         var properties = $.extend(defaults, options);
@@ -786,7 +794,7 @@
                 }
                 afnSearch_.push(fnSearch_);
             }
-
+            
             if (oTable.fnSettings().oFeatures.bServerSide) {
 
                 var fnServerDataOriginal = oTable.fnSettings().fnServerData;
